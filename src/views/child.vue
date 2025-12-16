@@ -4,10 +4,10 @@
   </div>
 </template>
 <script setup>
-import { isFunction } from "lodash";
+import { isFunction } from "lodash-es";
 import { IPCPostMessage } from "../util/ipc";
 
-const childIPC = new IPCPostMessage("http://localhost:5173", "my-app");
+const childIPC = new IPCPostMessage("*", "my-app");
 
 childIPC.on("message", (event) => IpcHostElement.notifyDomEvent(event));
 
@@ -17,8 +17,8 @@ class IpcHostElement {
 
   static notifyDomEvent(event) {
     const data = event.data;
-    const el = IpcHostElement.eventELMap.get(data.targetEl);
-    el.DOMLevel2Events[data.key](data.args);
+    const elEvent = IpcHostElement.eventELMap.get(data.targetEl);
+    elEvent.DOMLevel2Events[data.key](data.args);
   }
 
   constructor(options) {
@@ -88,38 +88,62 @@ class IpcHostElement {
 function HostElement(options) {
   const el = new IpcHostElement(options);
 
-  return new Proxy(el, {
-    set(target, key, newValue, receiver) {
-      if (!key.startsWith("_")) {
-        const isFnValue = isFunction(newValue);
-        el.template((resolve) => {
-          const targetEl = el.getTargetEL();
-          childIPC.send(
-            window.parent,
-            "ipcDom",
-            {
-              targetEl,
-              proxy: "set",
-              key,
-              isFnValue,
-              value: isFnValue ? null : newValue
-            },
-            resolve
-          );
-          if (isFnValue) {
-            if (!IpcHostElement.eventELMap.has(targetEl)) {
-              IpcHostElement.eventELMap.set(targetEl, {
-                DOMLevel2Events: {}
-              });
-            }
-            const { DOMLevel2Events } = IpcHostElement.eventELMap.get(targetEl);
-            DOMLevel2Events[key] = newValue.bind(el);
+  const proxySet = function (options) {
+    const { target, key, newValue, receiver, synthesis } = options;
+    if (!key.startsWith("_")) {
+      const isFnValue = isFunction(newValue);
+      el.template((resolve) => {
+        const targetEl = el.getTargetEL();
+        childIPC.send(
+          window.parent,
+          "ipcDom",
+          {
+            targetEl,
+            proxy: "set",
+            key: synthesis ?? key,
+            isFnValue,
+            value: isFnValue ? null : newValue
+          },
+          resolve
+        );
+        if (isFnValue) {
+          if (!IpcHostElement.eventELMap.has(targetEl)) {
+            IpcHostElement.eventELMap.set(targetEl, {
+              DOMLevel2Events: {}
+            });
           }
+          const { DOMLevel2Events } = IpcHostElement.eventELMap.get(targetEl);
+          DOMLevel2Events[key] = newValue.bind(el);
+        }
+      });
+    }
+    return Reflect.set(target, key, newValue, receiver);
+  };
+
+  return new Proxy(el, {
+    get(target, key, receiver) {
+      if (key === "style" && !target["style"]) {
+        target[key] = {};
+        return new Proxy(target[key], {
+          set: (styleTarget, styleKey, styleValue, styleReceiver) =>
+            proxySet({
+              target: styleTarget,
+              key: styleKey,
+              newValue: styleValue,
+              synthesis: `${key}.${styleKey}`,
+              receiver: styleReceiver
+            })
         });
       }
-
-      return Reflect.set(target, key, newValue, receiver);
-    }
+      return Reflect.get(target, key, receiver);
+    },
+    set: (target, key, newValue, receiver) =>
+      proxySet({
+        target,
+        key,
+        newValue,
+        receiver
+      })
   });
 }
 
@@ -147,6 +171,7 @@ const testFn = {
 
     input.oninput = function (el) {
       span.textContent = el.target.value;
+      div.style.backgroundColor = "yellow";
     };
 
     div.append(span, input);

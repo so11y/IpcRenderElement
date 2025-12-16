@@ -1,21 +1,21 @@
 <template>
   <div>
     <iframe
-      src="http://localhost:5173/#/child"
+      :src="`${location}child`"
       frameborder="0"
       ref="iframeRef"
     ></iframe>
-
-    <div ref="rootRef"></div>
   </div>
 </template>
 <script setup>
 import { ref } from "vue";
 import { IPCPostMessage } from "../util/ipc";
-import { get } from "lodash-es";
+import { get, set } from "lodash-es";
 const iframeRef = ref();
 
-const parentIPC = new IPCPostMessage("http://localhost:5173", "my-app");
+const location = window.location;
+
+const parentIPC = new IPCPostMessage("*", "my-app");
 
 const IpcDomMap = new Map();
 
@@ -25,6 +25,7 @@ function getTargetEL(data) {
   }
   return get(window, data.targetEl);
 }
+
 function createArgs(args) {
   return {
     type: args.type,
@@ -97,7 +98,7 @@ const handle = {
             );
           };
         } else {
-          el[data.key] = data.value;
+          set(el, data.key, data.value);
         }
 
         break;
