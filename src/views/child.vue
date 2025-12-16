@@ -139,15 +139,17 @@ const testFn = {
   createDiv() {
     const div = document.createElement("div");
 
+    const span = document.createElement("span");
+
     const input = document.createElement("input");
 
     input.value = 3252;
 
     input.oninput = function (el) {
-      console.log(el, "---");
+      span.textContent = el.target.value;
     };
 
-    div.append(input);
+    div.append(span, input);
 
     document.append(div);
   }

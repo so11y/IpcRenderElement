@@ -1,7 +1,7 @@
 <template>
   <div>
     <iframe
-      src="http://localhost:5173/#/postmessageRender/child"
+      src="http://localhost:5173/#/child"
       frameborder="0"
       ref="iframeRef"
     ></iframe>
@@ -11,7 +11,7 @@
 </template>
 <script setup>
 import { ref } from "vue";
-import { IPCPostMessage } from "../../util/ipc";
+import { IPCPostMessage } from "../util/ipc";
 import { get } from "lodash-es";
 const iframeRef = ref();
 

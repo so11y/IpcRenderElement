@@ -7,13 +7,11 @@ import { NodeTypes, ElementTypes } from "@vue/compiler-core";
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [vue(), vueJsx(), test()],
-  build: {
-    rollupOptions: {
-      // external: ["vue", "vue-i18n"]
-    }
-  },
-  // base: "/dddd/",
+  plugins: [
+    vue(),
+    vueJsx()
+    // test()
+  ],
   server: {
     headers: {
       // 允许所有域名跨域访问
