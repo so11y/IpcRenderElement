@@ -5,7 +5,7 @@
 </template>
 <script setup>
 import { isFunction } from "lodash";
-import { IPCPostMessage } from "../../util/ipc";
+import { IPCPostMessage } from "../util/ipc";
 
 const childIPC = new IPCPostMessage("http://localhost:5173", "my-app");
 

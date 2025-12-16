@@ -1,8 +1,0 @@
-{
-  "compilerOptions": {
-    "lib": ["es2020", "dom"],
-    "baseUrl": ".",
-    "types": ["./type/aaa.d.ts"]
-  },
-  "include": ["**/*.ts", "**/*.d.ts", "src/main.js", "src/i18.js"]
-}
