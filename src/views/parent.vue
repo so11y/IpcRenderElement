@@ -86,7 +86,19 @@ const handle = {
     switch (data.proxy) {
       case "set": {
         if (data.isFnValue) {
-          el[data.key] = function (args) {
+          const [targetKey, ...subKey] = data.key.split("_");
+          el[targetKey] = function (args) {
+            if (subKey.length > 0) {
+              subKey.forEach((key) => {
+                switch (key) {
+                  case "stop":
+                    args.stopPropagation();
+                    break;
+                  case "prevent":
+                    args.preventDefault();
+                }
+              });
+            }
             parentIPC.send(
               iframeRef.value.contentWindow,
               "ipcDom_DOMLevel2Events",

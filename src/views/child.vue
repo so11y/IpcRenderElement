@@ -25,9 +25,14 @@ class IpcHostElement {
     this._id = IpcHostElement.IpcId++;
     this._options = options;
     this._mountedPromise = Promise.withResolvers();
+    this.isDestroyed = false;
     if (options?.targetEl) {
       this._mountedPromise.resolve();
     }
+  }
+
+  toRaw() {
+    return this.__raw__;
   }
 
   getTargetEL() {
@@ -60,27 +65,57 @@ class IpcHostElement {
   }
 
   append(...nodes) {
-    this.template((resolve) => {
-      this._mountedPromise.promise.then(async () => {
-        await Promise.all(nodes.map((v) => v.withPendingTask()));
-        childIPC.send(
-          window.parent,
-          "ipcDom",
-          {
-            targetEl: this.getTargetEL(),
-            api: "append",
-            args: nodes.map((v) => v._id)
-          },
-          resolve
-        );
-      });
+    this.template(async (resolve, self) => {
+      await Promise.all(nodes.map((v) => v.withPendingTask()));
+
+      if (!self.children) {
+        self.children = [];
+      }
+      self.children.push(...nodes);
+
+      childIPC.send(
+        window.parent,
+        "ipcDom",
+        {
+          targetEl: self.getTargetEL(),
+          api: "append",
+          args: nodes.map((v) => v._id)
+        },
+        resolve
+      );
+    });
+  }
+
+  remove() {
+    return this.template((resolve, self) => {
+      self.isDestroyed = true;
+      childIPC.send(
+        window.parent,
+        "ipcDom",
+        {
+          targetEl: this.getTargetEL(),
+          api: "remove"
+        },
+        resolve
+      );
+      if (self.children?.length) {
+        //childIPC暂停
+        Promise.allSettled(self.children.map((child) => child.remove()));
+        //childIPC恢复
+        self.children = null;
+        IpcHostElement.eventELMap.delete(self.getTargetEL());
+      }
     });
   }
 
   template(callback) {
+    if (this.isDestroyed) {
+      console.warn("Element is destroyed");
+      return;
+    }
     this.withPendingTask().then(() => {
       this._curPromise = Promise.withResolvers();
-      callback(this._curPromise.resolve);
+      callback(this._curPromise.resolve, this.toRaw());
     });
   }
 }
@@ -122,6 +157,9 @@ function HostElement(options) {
 
   return new Proxy(el, {
     get(target, key, receiver) {
+      if (key === "__raw__") {
+        return target;
+      }
       if (key === "style" && !target["style"]) {
         target[key] = {};
         return new Proxy(target[key], {
@@ -168,6 +206,13 @@ const testFn = {
     const input = document.createElement("input");
 
     input.value = 3252;
+
+    div.onclick = function () {
+      alert("clicked");
+    };
+
+    //阻止冒泡
+    input.onclick_stop = function () {};
 
     input.oninput = function (el) {
       span.textContent = el.target.value;
