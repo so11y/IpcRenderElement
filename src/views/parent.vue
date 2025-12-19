@@ -62,9 +62,11 @@ const handle = {
     switch (data.api) {
       case "createElement": {
         if (!IpcDomMap.has(data.id)) {
+          const realDom = document.createElement(data.args);
+          realDom.setAttribute("rpc-id", data.id);
           IpcDomMap.set(data.id, {
             ipcArgs: data,
-            realDom: document.createElement(data.args)
+            realDom
           });
           event.respond();
         }
@@ -77,8 +79,16 @@ const handle = {
         event.respond();
         break;
       }
-      default:
+      case "querySelector": {
+        const el = getTargetEL(data).querySelector(...data.args);
+        console.log('--');
+        event.respond(el?.getAttribute("rpc-id"));
         break;
+      }
+      default: {
+        getTargetEL(data)[data.api](...data.args);
+        event.respond();
+      }
     }
   },
   proxy(data, event) {

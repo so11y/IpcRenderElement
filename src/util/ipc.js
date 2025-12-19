@@ -5,6 +5,7 @@ export class IPCPostMessage {
     this.channel = channel;
     this.listeners = new Map();
     this.messageId = 0;
+    this.isPause = false;
 
     // 监听消息
     window.addEventListener("message", this.handleMessage.bind(this));
@@ -72,7 +73,10 @@ export class IPCPostMessage {
    */
   handleMessage(event) {
     // 验证来源
-    if (this.targetOrigin !== "*" && event.origin !== this.targetOrigin) {
+    if (
+      (this.targetOrigin !== "*" && event.origin !== this.targetOrigin) ||
+      this.isPause
+    ) {
       return;
     }
 
@@ -126,6 +130,15 @@ export class IPCPostMessage {
   emit(event, data) {
     if (!this._events || !this._events[event]) return;
     this._events[event].forEach((callback) => callback(data));
+  }
+
+  async pauseTracking(callback) {
+    this.isPause = true;
+    try {
+      await callback();
+    } finally {
+      this.isPause = false;
+    }
   }
 
   /**

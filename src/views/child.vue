@@ -1,11 +1,14 @@
 <template>
   <div>
     <button @click="testFn.createDiv">createElement(div)</button>
+
+    <button @click="testFn.createStyles">createStyles</button>
   </div>
 </template>
 <script setup>
 import { isFunction } from "lodash-es";
 import { IPCPostMessage } from "../util/ipc";
+import { append, toChildrenArray } from "../util/collection";
 
 const childIPC = new IPCPostMessage("*", "my-app");
 
@@ -14,6 +17,8 @@ childIPC.on("message", (event) => IpcHostElement.notifyDomEvent(event));
 class IpcHostElement {
   static IpcId = 0;
   static eventELMap = new Map();
+
+  static idNodeMap = new Map();
 
   static notifyDomEvent(event) {
     const data = event.data;
@@ -26,13 +31,14 @@ class IpcHostElement {
     this._options = options;
     this._mountedPromise = Promise.withResolvers();
     this.isDestroyed = false;
+    this._curPromise = Promise.resolve();
     if (options?.targetEl) {
       this._mountedPromise.resolve();
     }
   }
 
   toRaw() {
-    return this.__raw__;
+    return this.__raw__ ?? this;
   }
 
   getTargetEL() {
@@ -42,20 +48,25 @@ class IpcHostElement {
     return this._id;
   }
 
-  withPendingTask() {
-    return Promise.all([
-      this._curPromise?.promise,
-      this._mountedPromise.promise
-    ]);
+  async withPendingTask(callback) {
+    return this._mountedPromise.promise.then(() => {
+      if (callback) {
+        this._curPromise = this._curPromise.then(() => callback());
+      }
+      return this._curPromise;
+    });
   }
 
   createElement(type) {
+    const self = this.toRaw();
+    self.nodeName = type;
+    IpcHostElement.idNodeMap.set(self._id, self);
     childIPC.send(
       window.parent,
       "ipcDom",
       {
         targetEl: "document",
-        id: this._id,
+        id: self._id,
         api: "createElement",
         args: type
       },
@@ -64,14 +75,34 @@ class IpcHostElement {
     return this;
   }
 
+  querySelector(selector) {
+    return this.template(async (resolve, self) => {
+      await Promise.allSettled(
+        toChildrenArray(self).map((child) => child.toRaw().withPendingTask())
+      );
+      childIPC.send(
+        window.parent,
+        "ipcDom",
+        {
+          targetEl: self.getTargetEL(),
+          api: "querySelector",
+          args: [selector]
+        },
+        (value) => {
+          resolve(IpcHostElement.idNodeMap.get(parseInt(value)));
+        }
+      );
+    });
+  }
+
   append(...nodes) {
     this.template(async (resolve, self) => {
       await Promise.all(nodes.map((v) => v.withPendingTask()));
 
-      if (!self.children) {
-        self.children = [];
-      }
-      self.children.push(...nodes);
+      append(
+        self,
+        nodes.map((v) => v.toRaw())
+      );
 
       childIPC.send(
         window.parent,
@@ -86,9 +117,63 @@ class IpcHostElement {
     });
   }
 
+  insertBefore(child, anchor) {
+    this.template(async (resolve, self) => {
+      insertBefore(self, child.toRaw(), anchor.toRaw());
+
+      childIPC.send(
+        window.parent,
+        "ipcDom",
+        {
+          targetEl: self.getTargetEL(),
+          api: "insertBefore",
+          args: [child.getTargetEL(), anchor?.getTargetEL() ?? null]
+        },
+        resolve
+      );
+    });
+  }
+
+  removeChild(child) {
+    this.template(async (resolve, self) => {
+      //代表child不proxy,不是proxy的话就是比如子卸载的时候通知父级 ->    self.parentNode?.removeChild(self);
+      //不是用户api操作的
+      if (child === child.toRaw() || !self.children) {
+        resolve();
+        return;
+      }
+      removeChild(self, child.toRaw());
+      IpcHostElement.idNodeMap.delete(child._id);
+      childIPC.send(
+        window.parent,
+        "ipcDom",
+        {
+          targetEl: this.getTargetEL(),
+          api: "removeChild"
+        },
+        resolve
+      );
+    });
+  }
+
   remove() {
-    return this.template((resolve, self) => {
+    return this.template(async (resolve, self) => {
       self.isDestroyed = true;
+      self.parentNode?.removeChild(self);
+
+      if (self.children) {
+        await childIPC.pauseTracking(() =>
+          Promise.allSettled(
+            toChildrenArray(self).map((child) => {
+              IpcHostElement.idNodeMap.delete(child._id);
+              child.toRaw().remove();
+            })
+          )
+        );
+        self.children = null;
+      }
+
+      IpcHostElement.eventELMap.delete(self.getTargetEL());
       childIPC.send(
         window.parent,
         "ipcDom",
@@ -98,13 +183,6 @@ class IpcHostElement {
         },
         resolve
       );
-      if (self.children?.length) {
-        //childIPC暂停
-        Promise.allSettled(self.children.map((child) => child.remove()));
-        //childIPC恢复
-        self.children = null;
-        IpcHostElement.eventELMap.delete(self.getTargetEL());
-      }
     });
   }
 
@@ -113,10 +191,25 @@ class IpcHostElement {
       console.warn("Element is destroyed");
       return;
     }
-    this.withPendingTask().then(() => {
-      this._curPromise = Promise.withResolvers();
-      callback(this._curPromise.resolve, this.toRaw());
+    return this.withPendingTask(() => {
+      const resolvePromise = Promise.withResolvers();
+      callback(resolvePromise.resolve, this.toRaw());
+      return resolvePromise.promise;
     });
+  }
+}
+class HostDocument extends IpcHostElement {
+  constructor() {
+    super({ targetEl: "document" });
+    this.head = HostElement({
+      targetEl: "document.head"
+    });
+    this.body = HostElement({
+      targetEl: "document.body"
+    });
+  }
+  createElement(type) {
+    return new HostElement().createElement(type);
   }
 }
 
@@ -185,17 +278,7 @@ function HostElement(options) {
   });
 }
 
-const document = {
-  append(...args) {
-    return this.body.append(...args);
-  },
-  createElement(type) {
-    return new HostElement().createElement(type);
-  },
-  body: HostElement({
-    targetEl: "document.body"
-  })
-};
+const document = new HostDocument();
 
 const testFn = {
   createDiv() {
@@ -222,6 +305,51 @@ const testFn = {
     div.append(span, input);
 
     document.append(div);
+
+    //没办法同步
+    div.querySelector("input").then((v) => {
+      console.log(v, "d-x");
+    });
+  },
+  async createStyles() {
+    const style = document.createElement("style");
+
+    style.textContent = `
+      .my-box {
+        width: 200px;
+        height: 100px;
+        background: lightblue;
+        border: 2px solid blue;
+        padding: 10px;
+        margin: 10px;
+      }
+
+      .my-button {
+        background: red;
+        color: white;
+        padding: 5px 10px;
+        border: none;
+        border-radius: 4px;
+      }
+    `;
+
+    document.head.append(style);
+
+    const box = await document.createElement("div");
+    box.className = "my-box";
+    box.textContent = "应用了样式的div";
+
+    const button = document.createElement("button");
+    button.className = "my-button";
+    button.textContent = "红色按钮";
+
+    button.onclick = function () {
+      alert("按钮被点击了！");
+    };
+
+    // 添加到页面
+    box.append(button);
+    document.body.append(box);
   }
 };
 </script>
